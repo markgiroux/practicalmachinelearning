@@ -1,0 +1,169 @@
+---
+title: "Coursera-ML-FinalProject"
+author: "Mark Giroux"
+date: "August 16, 2018"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Executive Summary  
+
+Using devices such as Jawbone Up, Nike FuelBand, and Fitbit it is now possible to collect a large amount of data about personal activity relatively inexpensively. These type of devices are part of the quantified self movement - a group of enthusiasts who take measurements about themselves regularly to improve their health, to find patterns in their behavior, or because they are tech geeks. One thing that people regularly do is quantify how much of a particular activity they do, but they rarely quantify how well they do it.  
+
+The goal of this analysis is to use data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants to predict classification of how well barbell lifts were performed in 5 different ways.  
+
+
+
+## Load and Process Data
+
+Seperate Training and Test data sets were provided. The Training data will be used first to build and cross validate the model, and then the Testing data will be used to predict the classification for new observations. 
+
+The data contains a lot of NAs, specifically within a subset of the variables, so those attributes were removed. Also, the first 8 columns, which act as identifiers and time stamps for the data were also removed as they would not be used in the model.
+
+```{r}
+# load train data set
+train <- read.csv("./pml-training.csv", header=TRUE, na.strings = c("NA",""," "))
+
+# remove all columns with NAs
+t  <- apply(train, 2, function(x) {sum(is.na(x))})
+train_noNA <- train[,which(t == 0)]
+
+# remove other useless columns (row number, dates, windows) 
+train_final <- train_noNA[,c(8:ncol(train_noNA))]
+```
+
+Some exploratory analysis was run to validate the content and structure of the remaining data.  
+
+```{r, results=FALSE}
+# Exploratory Analysis
+sum(complete.cases(train_final))
+dim(train_final)
+str(train_final)
+head(train_final)
+```
+
+
+## Build Model
+
+Before building a model, I create a sub-Train and sub-Test set from the original Training data to be used for Cross Validation - since we cannot use the Test set when building the model (as it would then become part of the Training set), we need a way to estimate the test set accuracy using the training set.
+
+I am using K-Fold cross validation with 2-folds (I chose a smaller 'k' as it has less variance, albiet more bias). I split the data in half, build my model on each 'fold' (training) and then evaluate on the other 'fold' (testing) and average the estimated errors. This will give an estimate of the average Out of Sample estimate. 
+
+```{r, results=FALSE, warning=FALSE, message=FALSE}
+# load caret package
+library(caret)
+
+set.seed(125)
+
+# Split data in half and create 'fold1' and 'fold2'
+inTrain <- createDataPartition(y=train_final$classe, p=0.50, list=FALSE)
+kfold1 <- train_final[inTrain, ]
+kfold2  <- train_final[-inTrain, ]
+```
+
+
+I chose to use a Boosted method, which is one of the most accurate out of the box classifiers that can be used. It takes a lot of (possibly) weak predictors,
+weights (calculated based on errors) them in a way that takes advantage of their strengths (upweights missed classifications), and adds them up which results in a stronger predictor. It's goal is to minimize error (on training set). 
+
+The model uses the 'classe' variable in the training set as the predicted variable, and all remaining attributes as predictor variables.
+
+**Build model on Fold 1**  
+```{r model1, results=FALSE}
+# Fit model on 1st k-fold
+modFit1 <- train(classe ~ ., data = kfold1, method = "gbm", verbose=FALSE)
+modFit1
+print(modFit1$finalModel)
+```
+
+**Confusion Matrix and Accuracy of Model on Fold 1**  
+```{r}
+# predictions using model fit on fold1
+pred <- predict(modFit1, newdata=kfold1)
+confusionMatrix(pred, kfold1$classe)  
+rm(pred)
+```
+
+
+**Build model on Fold 2**  
+```{r model2, results=FALSE}
+# Fit model on 2nd k-fold
+modFit2 <- train(classe ~ ., data = kfold2, method = "gbm", verbose=FALSE)
+modFit2
+print(modFit2$finalModel)
+```
+
+**Confusion Matrix and Accuracy of Model on Fold 2**  
+```{r}
+# predictions using model fit on fold2
+pred <- predict(modFit2, newdata=kfold2)
+confusionMatrix(pred,kfold2$classe)  
+```
+
+The average accuracy of the model (representing the in-sample error rate as it's from the data the model was built/trained on) run against fold1 and fold2 is 97.61%
+
+
+
+## Cross Validation
+
+The next step is to estimate the out of sample error rate by running each model against the other 'fold'.  
+
+
+**Confusion Matrix and Accuracy of Model (built using Fold 1 data set) on Fold 2 data set**  
+```{r}
+# predictions from fold2 data, using model fit on fold1
+pred1 <- predict(modFit1, newdata=kfold2)
+confusionMatrix(pred1,kfold2$classe)  
+```
+
+**Confusion Matrix and Accuracy of Model (built using Fold 2 data set) on Fold 1 data set**  
+```{r}
+# predictions from fold1 data, using model fit on fold2
+pred2 <- predict(modFit1, newdata=kfold1)
+confusionMatrix(pred2,kfold1$classe)  
+```
+
+The average out of sample accuracy of the model is: 96.99%.  This seems adequate enough to proceed and to use on the testing data to predict new values.  
+
+
+## Predicting 
+
+The additional Test set provided was loaded into R, and all the same data cleaning steps that were performed on the Training data were performed on this Testing data.  
+
+```{r, results=FALSE}
+# load test data set
+test <- read.csv("./pml-testing.csv", header=TRUE, na.strings = c("NA",""," "))
+
+# remove all columns with NAs
+t  <- apply(test, 2, function(x) {sum(is.na(x))})
+test_noNA <- test[,which(t == 0)]
+
+# remove other useless columns (row number, dates, windows) 
+test_final <- test_noNA[,c(8:ncol(test_noNA))]
+
+# Exploratory Analysis
+sum(complete.cases(test_final))
+dim(test_final)
+str(test_final)
+head(test_final)
+```
+
+The model is then used to predict the 'classe' for the 20 observations in the testing data.  
+
+```{r}
+# predict new values for test data using model fit above
+pred1 <- predict(modFit1, newdata=test_final)
+pred1
+```
+
+
+## Conclusion
+
+It does appear possible to accurately predict the quality of barbell lifts given these specific data points gathered. 
+
+
+
+## Citatations
+1. The data for this project come from this source (see the section on the Weight Lifting Exercise Dataset): http://web.archive.org/web/20161224072740/http:/groupware.les.inf.puc-rio.br/har  
